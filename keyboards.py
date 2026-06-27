@@ -14,6 +14,7 @@ def get_compras_keyboard(compras):
     return markup
 
 def get_preferencias_voz_keyboard(acento_actual, velocidad_actual):
+    # Acentos
     markup = InlineKeyboardMarkup(row_width=3)
     acentos = [('es', '🇪🇸 ES'), ('mx', '🇲🇽 MX'), ('ar', '🇦🇷 AR')]
     botones_acentos = []
@@ -22,7 +23,14 @@ def get_preferencias_voz_keyboard(acento_actual, velocidad_actual):
         botones_acentos.append(InlineKeyboardButton(f"{prefix}{label}", callback_data=f"acento_{val}"))
     markup.add(*botones_acentos)
     
-    velocidades = [(0.8, '🐢 0.8x'), (1.0, '▶️ 1.0x'), (1.2, '🐇 1.2x')]
+    # Velocidades ampliadas hasta 2.0x
+    velocidades = [
+        (0.8, '🐢 0.8x'), 
+        (1.0, '▶️ 1.0x'), 
+        (1.2, '🐇 1.2x'), 
+        (1.5, '⚡ 1.5x'), 
+        (2.0, '🚀 2.0x')
+    ]
     botones_velocidades = []
     for val, label in velocidades:
         prefix = "🟢 " if float(val) == float(velocidad_actual) else ""
@@ -64,4 +72,3 @@ def get_tareas_keyboard(tareas):
         btn_delete = InlineKeyboardButton("🗑️ Borrar", callback_data=f"deletetarea_{item_id}")
         markup.add(btn_toggle, btn_delete)
     return markup
-

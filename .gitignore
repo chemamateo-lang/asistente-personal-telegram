@@ -1,9 +1,24 @@
+# Entornos virtuales
 venv/
 env/
-__pycache__/
-*.pyc
+
+# Fichero de variables de entorno y configuración
 .env
+
+# Base de datos local
+base_datos.db
 *.sqlite
 *.db
+
+# Archivos temporales generados por la síntesis de voz, ffmpeg y bots
+temp_tts_*
+temp_final_*
 *.ogg
 *.mp3
+
+# Caché y compilaciones de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

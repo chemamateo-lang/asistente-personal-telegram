@@ -1,295 +1,179 @@
+# handlers.py
 import os
-import datetime
-from telebot import TeleBot
-from config import ADMIN_USER_ID, LIMITE_IA_DIARIO
-import database
-import utils
-import keyboards
+import time
+import logging
+from telegram import Update
+from telegram.ext import ContextTypes
+from gtts import gTTS
 
-# Diccionario temporal global para guardar los pasos de creación de citas
-user_cita_temp = {}
+from database import (
+    increment_ia_usage,
+    get_ia_usage,
+    reset_ia_usage_db,
+    is_admin,
+    add_appointment_db
+)
+from keyboards import get_voice_settings_keyboard, get_main_menu_keyboard
+from utils import get_ai_response
 
-def registrar_handlers(bot: TeleBot):
-    """Registra todos los comandos y mensajes interactivos del bot."""
+logger = logging.getLogger(__name__)
 
-    # Inicializar la base de datos al arrancar
-    database.init_db()
+# --- Command Handlers ---
 
-    # ------------------------------------------
-    # COMANDO INICIAL /START
-    # ------------------------------------------
-    @bot.message_handler(commands=['start'])
-    def send_welcome(message):
-        nombre = message.from_user.first_name
-        bot.reply_to(message, f"¡Hola {nombre}! Soy tu asistente personal de IA. Estoy listo para ayudarte a gestionar tu agenda, listas y conversar. ¡Pruébame!")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manda el mensaje de bienvenida con el menú principal."""
+    user = update.effective_user
+    await update.message.reply_text(
+        f"¡Hola, {user.first_name}! Soy tu asistente personal modular. ¿En qué te puedo ayudar hoy?",
+        reply_markup=get_main_menu_keyboard()
+    )
 
-    # ------------------------------------------
-    # COMANDOS DE AYUDA Y MENÚ
-    # ------------------------------------------
-    @bot.message_handler(commands=['ayuda', 'menu'])
-    def mostrar_ayuda(message):
-        """Muestra la lista completa de comandos y funcionalidades del bot."""
-        texto_ayuda = (
-            "🤖 *¡Hola! Aquí tienes el menú de ayuda y los comandos disponibles:*\n\n"
-            "📌 *Módulo de Agenda y Citas*\n"
-            "• `/cita` ‑ Inicia el asistente interactivo paso a paso para crear un evento.\n"
-            "• `/agenda` ‑ Muestra un listado de tus citas guardadas. Permite gestionarlas, añadir notas, alarmas o borrarlas.\n\n"
-            "📝 *Módulo de Tareas Rápidas*\n"
-            "• `/tarea <texto>` ‑ Añade una tarea rápida a tus pendientes.\n"
-            "• `/pendientes` ‑ Muestra tu lista de tareas interactivas.\n\n"
-            "🛒 *Módulo de Lista de la Compra*\n"
-            "• `/comprar` ‑ Muestra tu lista de la compra interactiva (marca o borra artículos).\n"
-            "• `/lista <artículo>` ‑ Añade directamente un producto a la lista.\n\n"
-            "🤖 *Interacción con la IA*\n"
-            "• Escribe cualquier mensaje directamente (sin barras) para conversar con la IA integrada.\n\n"
-            "⚙️ *Sistema*\n"
-            "• `/start` ‑ Mensaje de bienvenida.\n"
-            "• `/ayuda` o `/menu` ‑ Muestra este mismo listado."
-        )
-        bot.reply_to(message, texto_ayuda, parse_mode="Markdown")
+async def set_voice_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra el menú interactivo para configurar la voz (acento y velocidad)."""
+    await update.message.reply_text(
+        "Configura los parámetros de la voz para las respuestas de la IA:",
+        reply_markup=get_voice_settings_keyboard()
+    )
 
-    # ------------------------------------------
-    # GESTIÓN DE LA LISTA DE LA COMPRA
-    # ------------------------------------------
-    @bot.message_handler(commands=['comprar'])
-    def ver_lista_compra(message):
-        user_id = message.from_user.id
-        items = database.get_compras(user_id)
-        
-        if not items:
-            bot.reply_to(message, "Tu lista de la compra está vacía. Añade artículos escribiendo: */lista manzana*", parse_mode="Markdown")
-        else:
-            markup = keyboards.get_compras_keyboard(items)
-            bot.reply_to(message, "🛒 *Tu Lista de la Compra*:", reply_markup=markup, parse_mode="Markdown")
-
-    @bot.message_handler(commands=['lista'])
-    def agregar_a_compra(message):
-        user_id = message.from_user.id
-        articulo = message.text.replace('/lista', '').strip()
-        
-        if not articulo:
-            bot.reply_to(message, "Por favor, indica qué quieres añadir. Ejemplo: `/lista leche`")
-            return
-            
-        database.add_compra(user_id, articulo)
-        bot.reply_to(message, f"✅ Añadido a la compra: *{articulo}*", parse_mode="Markdown")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('toggle_') or call.data.startswith('delete_'))
-    def callback_compra(call):
-        accion, item_id_str = call.data.split('_')
-        item_id = int(item_id_str)
-        
-        if accion == 'toggle':
-            database.toggle_compra(item_id)
-        elif accion == 'delete':
-            database.delete_compra(item_id)
-            
-        user_id = call.from_user.id
-        items = database.get_compras(user_id)
-        markup = keyboards.get_compras_keyboard(items)
-        
-        try:
-            bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id, 
-                reply_markup=markup
-            )
-            bot.answer_callback_query(call.id, "¡Actualizado!")
-        except Exception as e:
-            print(f"Error al actualizar teclado de compra: {e}")
-
-    # ------------------------------------------
-    # GESTIÓN DE TAREAS RÁPIDAS
-    # ------------------------------------------
-    @bot.message_handler(commands=['tarea'])
-    def agregar_tarea(message):
-        user_id = message.from_user.id
-        tarea_texto = message.text.replace('/tarea', '').strip()
-        
-        if not tarea_texto:
-            bot.reply_to(message, "Por favor, indica la tarea que deseas agregar. Ejemplo: `/tarea regar las plantas`", parse_mode="Markdown")
-            return
-            
-        database.add_tarea(user_id, tarea_texto)
-        bot.reply_to(message, f"✅ Tarea agregada: *{tarea_texto}*", parse_mode="Markdown")
-
-    @bot.message_handler(commands=['pendientes'])
-    def ver_tareas(message):
-        user_id = message.from_user.id
-        tareas = database.get_tareas_usuario(user_id)
-        
-        if not tareas:
-            bot.reply_to(message, "🎉 ¡No tienes tareas pendientes! Añade una escribiendo: `/tarea [texto]`", parse_mode="Markdown")
-        else:
-            markup = keyboards.get_tareas_keyboard(tareas)
-            bot.reply_to(message, "📝 *Tus Tareas Pendientes*:", reply_markup=markup, parse_mode="Markdown")
-
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('toggletarea_') or call.data.startswith('deletetarea_'))
-    def callback_tarea(call):
-        accion, item_id_str = call.data.split('_')
-        item_id = int(item_id_str)
-        
-        if accion == 'toggletarea':
-            database.toggle_tarea(item_id)
-        elif accion == 'deletetarea':
-            database.delete_tarea(item_id)
-            
-        user_id = call.from_user.id
-        tareas = database.get_tareas_usuario(user_id)
-        markup = keyboards.get_tareas_keyboard(tareas)
-        
-        try:
-            bot.edit_message_reply_markup(
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id, 
-                reply_markup=markup
-            )
-            bot.answer_callback_query(call.id, "¡Actualizado!")
-        except Exception as e:
-            print(f"Error al actualizar teclado de tareas: {e}")
-
-    # ------------------------------------------
-    # GESTIÓN DE CITAS Y AGENDA
-    # ------------------------------------------
+async def reset_ia(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Comando de administración para reiniciar el contador diario de IA."""
+    user_id = update.effective_user.id
     
-    @bot.message_handler(commands=['agenda'])
-    def ver_agenda(message):
-        """Muestra la lista de citas guardadas del usuario."""
-        user_id = message.from_user.id
-        citas = database.get_citas_usuario(user_id)
+    if not is_admin(user_id):
+        await update.message.reply_text("Lo siento, no tienes permisos de administrador para ejecutar este comando.")
+        return
         
-        if not citas:
-            bot.reply_to(message, "📅 No tienes ninguna cita programada.\nPuedes crear una nueva escribiendo `/cita`.", parse_mode="Markdown")
-        else:
-            markup = keyboards.get_lista_citas_keyboard(citas)
-            bot.reply_to(message, "📌 *Tus Citas Guardadas*:\nSelecciona una cita para ver sus opciones (notas, borrar, etc.):", reply_markup=markup, parse_mode="Markdown")
+    reset_ia_usagedb()
+    await update.message.reply_text("✅ Contador diario de uso de IA reiniciado exitosamente para todos los usuarios.")
 
-    @bot.message_handler(commands=['cita'])
-    def cmd_nueva_cita(message):
-        msg = bot.reply_to(message, "📝 Vamos a crear una nueva cita.\n\n¿Cuál es el *título* o asunto?", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_titulo)
+async def cita_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Inicia el asistente paso a paso para registrar un evento/cita."""
+    await update.message.reply_text(
+        "Iniciando asistente de citas...\n"
+        "Por favor, dime los detalles de la cita respondiendo con el formato:\n"
+        "<i>Título | Fecha y Hora (YYYY-MM-DD HH:MM) | Tiempo de aviso previo (minutos) | Nota opcional</i>\n\n"
+        "Ejemplo: <code>Dentista | 2026-07-01 10:00 | 30 | Revisión anual</code>",
+        parse_mode="HTML"
+    )
+    context.user_data["awaiting_appointment"] = True
 
-    def process_titulo(message):
-        chat_id = message.chat.id
-        user_cita_temp[chat_id] = {'titulo': message.text}
-        
-        msg = bot.reply_to(message, "📅 Perfecto. Ahora dime la *fecha* (ej: 30-06-2026, Mañana, etc.):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_fecha)
+# --- Test / Simulation Handlers ---
 
-    def process_fecha(message):
-        chat_id = message.chat.id
-        user_id = message.from_user.id
-        titulo = user_cita_temp[chat_id]['titulo']
-        fecha = message.text
-        
-        cita_id = database.add_cita(user_id, titulo, fecha)
-        del user_cita_temp[chat_id]
-        
-        markup = keyboards.get_cita_opciones_keyboard(cita_id)
-        
-        mensaje_confirmacion = (
-            f"✅ *Cita guardada correctamente*\n\n"
-            f"📌 *Asunto:* {titulo}\n"
-            f"📅 *Fecha:* {fecha}\n\n"
-            f"¿Qué más quieres hacer con esta cita?"
-        )
-        bot.reply_to(message, mensaje_confirmacion, reply_markup=markup, parse_mode="Markdown")
-
-    # ------------------------------------------
-    # MANEJADOR DE ACCIONES EN LÍNEA DE CITAS (Ver, Notas, Alarmas, Borrar)
-    # ------------------------------------------
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manejador de prueba para verificar que el bot responde correctamente."""
+    user = update.effective_user
+    logger.info(f"Ejecutando comando de prueba por el usuario {user.id}")
     
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('ver_cita_'))
-    def callback_ver_cita(call):
-        cita_id = int(call.data.split('_')[2])
-        markup = keyboards.get_cita_opciones_keyboard(cita_id)
-        bot.send_message(
-            call.message.chat.id, 
-            "⚙️ ¿Qué deseas gestionar de esta cita?", 
-            reply_markup=markup
+    await update.message.reply_text(
+        f"¡Hola {user.first_name}! El sistema de handlers y comandos está funcionando correctamente. 🟢"
+    )
+
+async def test_echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Manejador de eco para pruebas de texto plano."""
+    text_received = update.message.text
+    await update.message.reply_text(f"Eco de prueba recibido: {text_received}")
+
+# --- Callback / Inline Keyboard Handlers ---
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mestiona las selecciones de los teclados interactivos (configuración de voz)."""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    # Manejo de selección de acentos
+    if data in ["es", "mx", "ar"]:
+        context.user_data["voice_lang"] = data
+        await query.edit_message_text(
+            text=f"Acento configurado a: {data.upper()}. Ahora elige la velocidad:",
+            reply_markup=get_voice_settings_keyboard(current_lang=data)
+        )
+    
+    # Manejo de selección de velocidades
+    elif data in ["0.8", "1.0", "1.2", "1.5", "2.0"]:
+        context.user_data["voice_tempo"] = float(data)
+        lang = context.user_data.get("voice_lang", "es")
+        await query.edit_message_text(
+            text=f"✅ Configuración guardada correctamente.\nIdioma: {lang.upper()} | Velocidad: {data}x"
         )
 
-    @bot.callback_query_handler(func=lambda call: call.data.startswith('cita_'))
-    def callback_cita_opciones(call):
-        partes = call.data.split('_')
-        accion = partes[1]  # 'notas', 'alarmas' o 'borrar'
-        cita_id = int(partes[2])
-        
-        if accion == 'borrar':
-            database.delete_cita(cita_id)
-            bot.edit_message_text(
-                "🗑️ *Cita eliminada correctamente* junto con sus notas y alarmas.", 
-                chat_id=call.message.chat.id, 
-                message_id=call.message.message_id,
-                parse_mode="Markdown"
+# --- Message Handler (Texto, IA, Notas de Voz y Asistente de Citas) ---
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Procesa los mensajes de texto, ya sea para el asistente de citas, llamadas a la IA o conversación general."""
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    # 1. Procesar asistente paso a paso de Citas
+    if context.user_data.get("awaiting_appointment"):
+        context.user_data["awaiting_appointment"] = False
+        try:
+            parts = [p.strip() for p in text.split("|")]
+            if len(parts) < 3:
+                raise ValueError("Formato incompleto.")
+                
+            title = parts[0]
+            datetime_str = parts[1]
+            alarm_offset = int(parts[2])
+            note = parts[3] if len(parts) > 3 else ""
+            
+            # Guardar en base de datos
+            add_appointment_db(user_id, title, datetime_str, alarm_offset, note)
+            
+            await update.message.reply_text(
+                f"🎉 ¡Cita registrada!\n"
+                f"<b>Evento:</b> {title}\n"
+                f"<b>Fecha:</b> {datetime_str}\n"
+                f"<b>Aviso:</b> {alarm_offset} min antes."
+                , parse_mode="HTML"
             )
-            
-        elif accion == 'notas':
-            notas = database.get_notas_by_cita(cita_id)
-            
-            if not notas:
-                msg = bot.send_message(call.message.chat.id, "No hay notas para esta cita.\n\nEscribe ahora la nueva nota que quieres añadir (o escribe 'cancelar'):")
-            else:
-                texto_notas = "📝 *Notas actuales:*\n\n"
-                for n in notas:
-                    texto_notas += f"• {n[1]}\n"
-                
-                texto_notas += "\nEscribe una nueva nota para añadirla a la lista (o escribe 'cancelar'):"
-                msg = bot.send_message(call.message.chat.id, texto_notas, parse_mode="Markdown")
-            
-            bot.register_next_step_handler(msg, process_add_nota, cita_id)
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Error al procesar la cita. Formato incorrecto. Por favor, inténtalo de nuevo usando /cita.\nDetalles: {e}"
+            )
+        return
 
-        elif accion == 'alarmas':
-            alarmas = database.get_alarmas_by_cita(cita_id)
-            
-            if not alarmas:
-                msg = bot.send_message(call.message.chat.id, "⏰ No hay alarmas configuradas para esta cita.\n\nEscribe cuándo quieres el aviso (ej: '30 minutos antes', '1 hora antes' o '26-06-2026 10:00'):")
-            else:
-                texto_alarmas = "⏰ *Alarmas actuales para esta cita:*\n\n"
-                for a in alarmas:
-                    texto_alarmas += f"• 🔔 {a[1]}\n"
-                
-                texto_alarmas += "\nEscribe cuándo quieres añadir otra alarma:"
-                msg = bot.send_message(call.message.chat.id, texto_alarmas, parse_mode="Markdown")
-            
-            bot.register_next_step_handler(msg, process_add_alarma, cita_id)
-
-    def process_add_nota(message, cita_id):
-        if message.text.lower().strip() == 'cancelar':
-            bot.reply_to(message, "Acción cancelada.")
-            return
-            
-        database.add_nota(cita_id, message.text)
+    # 2. Gestión de límites diarios de IA
+    usage = get_ia_usage(user_id)
+    if usage >= 50:
+        await update.message.reply_text("🚫 Has alcanzado tu límite diario de 50 mensajes para la IA. Se reiniciará mañana o mediante comando de administrador.")
+        return
         
-        markup = keyboards.get_cita_opciones_keyboard(cita_id)
-        bot.reply_to(message, "✅ Nota guardada con éxito. ¿Quieres hacer algo más con esta cita?", reply_markup=markup)
-
-    def process_add_alarma(message, cita_id):
-        if message.text.lower().strip() == 'cancelar':
-            bot.reply_to(message, "Acción cancelada.")
-            return
-            
-        database.add_alarma(cita_id, message.text)
+    # Incrementar uso diario
+    increment_ia_usage(user_id)
+    
+    # Obtener respuesta de IA (preparado para Groq/OpenAI en utils.py)
+    ai_response_text = get_ai_response(text)
+    
+    # 3. Síntesis de voz (Texto a Voz) utilizando gTTS y atempo (ffmpeg) mediante filtro
+    lang_code = context.user_data.get("voice_lang", "es")
+    tempo = context.user_data.get("voice_tempo", 1.0)
+    
+    # Generar archivo de audio temporal
+    temp_tts_file = f"temp_tts_{user_id}_{int(time.time())}.mp3"
+    temp_final_file = f"temp_final_{user_id}_{int(time.time())}.mp3"
+    
+    try:
+        # Generar audio base con gTTS
+        tts = gTTS(text=ai_response_text, lang=lang_code, slow=False)
+        tts.save(temp_tts_file)
         
-        markup = keyboards.get_cita_opciones_keyboard(cita_id)
-        bot.reply_to(message, "✅ Alarma/Aviso guardado con éxito. ¿Quieres gestionar algo más de esta cita?", reply_markup=markup)
-
-    # ------------------------------------------
-    # INTERACCIÓN BÁSICA CON IA (Texto libre)
-    # ------------------------------------------
-    @bot.message_handler(func=lambda message: not message.text.startswith('/') and not message.reply_to_message)
-    def chat_ia(message):
-        user_id = message.from_user.id
+        # Aplicar control de velocidad real mediante ffmpeg y el filtro atempo
+        # Nota: el filtro atempo acepta valores entre 0.5 y 2.0.
+        os.system(f'ffmpeg -i {temp_tts_file} -filter:a "atempo={tempo}" -vn {temp_final_file} -y')
         
-        usos_hoy = database.get_uso_ia_hoy(user_id)
-        if usos_hoy >= LIMITE_IA_DIARIO:
-            bot.reply_to(message, "Has alcanzado tu límite diario de uso de IA.")
-            return
+        # Enviar nota de voz a Telegram
+        with open(temp_final_file, 'rb') as audio:
+            await update.message.reply_voice(voice=audio, caption=ai_response_text)
             
-        nuevo_total = database.incrementar_uso_ia(user_id)
-        respuesta = utils.generar_respuesta_texto(message.text)
+    except Exception as e:
+        logger.error(f"Error al procesar la nota de voz: {e}")
+        await update.message.reply_text(f"IA: {ai_response_text}\n(Nota: Falló la síntesis de voz).")
         
-        if nuevo_total % 5 == 0: 
-            bot.send_message(ADMIN_USER_ID, f"📊 El usuario {user_id} lleva {nuevo_total} usos de IA hoy.")
-            
-        bot.reply_to(message, respuesta)
+    finally:
+        # Limpieza de archivos temporales
+        if os.path.exists(temp_tts_file):
+            os.remove(temp_tts_file)
+        if os.path.exists(temp_final_file):
+            os.remove(temp_final_file)
