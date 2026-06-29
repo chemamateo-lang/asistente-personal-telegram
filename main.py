@@ -27,7 +27,7 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
 )
-from telegram import Update, constants
+from telegram import BotCommand, Update, constants
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -816,9 +816,28 @@ def main() -> None:
     database.init_db()
     logger.info("Base de datos inicializada.")
 
+    async def post_init(app) -> None:
+        await app.bot.set_my_commands([
+            BotCommand("start",      "Mensaje de bienvenida"),
+            BotCommand("ayuda",      "Ver todos los comandos"),
+            BotCommand("reset",      "Borrar historial de conversación"),
+            BotCommand("mode",       "Cambiar modo: normal | concise | creative"),
+            BotCommand("resume",     "Ver últimos mensajes en memoria"),
+            BotCommand("lista",      "Añadir artículo a la lista de la compra"),
+            BotCommand("comprar",    "Ver y gestionar la lista de la compra"),
+            BotCommand("tarea",      "Añadir tarea pendiente"),
+            BotCommand("pendientes", "Ver y gestionar tareas pendientes"),
+            BotCommand("cita",       "Crear nueva cita paso a paso"),
+            BotCommand("agenda",     "Ver y gestionar agenda de citas"),
+            BotCommand("cancelar",   "Cancelar operación en curso"),
+            BotCommand("voz",        "Configurar voz y respuestas habladas"),
+        ])
+        logger.info("Comandos registrados en Telegram.")
+
     app = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
+        .post_init(post_init)
         .build()
     )
 
