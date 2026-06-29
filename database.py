@@ -73,6 +73,12 @@ def init_db():
         )
     ''')
     
+    # Migración: añadir voz_activa si la tabla usuarios ya existía sin esa columna
+    c.execute("PRAGMA table_info(usuarios)")
+    cols = [row[1] for row in c.fetchall()]
+    if "voz_activa" not in cols:
+        c.execute("ALTER TABLE usuarios ADD COLUMN voz_activa INTEGER DEFAULT 0")
+
     conn.commit()
     conn.close()
 
@@ -339,3 +345,28 @@ def update_velocidad(user_id, velocidad):
     c.execute("UPDATE usuarios SET velocidad = ? WHERE user_id = ?", (velocidad, user_id))
     conn.commit()
     conn.close()
+
+def get_voz_activa(user_id) -> bool:
+    """Devuelve True si el usuario tiene las respuestas de voz activadas."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT voz_activa FROM usuarios WHERE user_id = ?", (user_id,))
+    fila = c.fetchone()
+    conn.close()
+    return bool(fila[0]) if fila else False
+
+def toggle_voz_activa(user_id) -> bool:
+    """Alterna el estado de voz del usuario y devuelve el nuevo estado."""
+    conn = get_connection()
+    c = conn.cursor()
+    # Asegura que el usuario existe
+    c.execute("INSERT OR IGNORE INTO usuarios (user_id) VALUES (?)", (user_id,))
+    c.execute(
+        "UPDATE usuarios SET voz_activa = NOT voz_activa WHERE user_id = ?",
+        (user_id,),
+    )
+    conn.commit()
+    c.execute("SELECT voz_activa FROM usuarios WHERE user_id = ?", (user_id,))
+    nuevo = bool(c.fetchone()[0])
+    conn.close()
+    return nuevo
