@@ -22,3 +22,14 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# Logs
+*.log
+
+# Editores
+*.swp
+*.swo
+*~
+
+# PM2
+.pm2/
