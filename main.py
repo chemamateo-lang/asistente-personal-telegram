@@ -38,6 +38,7 @@ from telegram.ext import (
     filters,
 )
 
+import documentos
 import keyboards
 import utils
 
@@ -660,6 +661,11 @@ async def cmd_ayuda(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "🎙️ *Voz*\n"
         "• `/voz` — configurar acento, velocidad y activar/desactivar respuestas habladas\n"
         "También puedes enviar notas de voz o fotos.\n\n"
+        "🗂️ *Documentos*\n"
+        "Envía un PDF o archivo y te pregunto la carpeta.\n"
+        "Foto con el texto `doc` → se guarda como documento.\n"
+        "• `/docs` — ver carpetas y recibir documentos\n"
+        "• `/buscar <texto>` — buscar por nombre\n\n"
         "⚙️ *Sistema*\n"
         "• `/start` — mensaje de bienvenida\n"
         "• `/ayuda` — este mensaje",
@@ -831,6 +837,8 @@ def main() -> None:
             BotCommand("agenda",     "Ver y gestionar agenda de citas"),
             BotCommand("cancelar",   "Cancelar operación en curso"),
             BotCommand("voz",        "Configurar voz y respuestas habladas"),
+            BotCommand("docs",       "Ver el archivo de documentos"),
+            BotCommand("buscar",     "Buscar un documento por nombre"),
         ])
         logger.info("Comandos registrados en Telegram.")
 
@@ -870,6 +878,9 @@ def main() -> None:
     app.add_handler(CommandHandler("agenda", cmd_agenda))
     app.add_handler(CallbackQueryHandler(callback_ver_cita, pattern=r"^ver_cita_\d+$"))
     app.add_handler(CallbackQueryHandler(callback_cita_borrar, pattern=r"^cita_borrar_\d+$"))
+
+    # Archivo de documentos (antes del handler genérico de fotos)
+    documentos.registrar(app)
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))

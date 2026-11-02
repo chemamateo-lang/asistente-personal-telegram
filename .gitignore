@@ -33,3 +33,12 @@ __pycache__/
 
 # PM2
 .pm2/
+
+# Claves SSH y certificados: NUNCA al repositorio
+SHA256*
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+# Documentos personales del archivo del bot
+documentos_bot/
